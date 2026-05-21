@@ -1,0 +1,38 @@
+name: AI PR Reviewer (Self Review)
+
+# このリポジトリ自身のPRに、この AI PR Reviewer Action を適用する（ドッグフーディング）。
+# 公開版ではなく "uses: ./" でPRに含まれるコードをそのままビルドして使うため、
+# リリース前の変更を即座に検証できる。
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # フォークからのPRには Secrets が渡らないため、同一リポジトリのPRのみ実行する。
+      - name: Run AI PR Reviewer (from this branch)
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        uses: ./
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          output_path: 'ai-review-report.md'
+          language: 'ja-JP'
+
+      - name: Upload review report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-review-report
+          path: ai-review-report.md
+          if-no-files-found: ignore
