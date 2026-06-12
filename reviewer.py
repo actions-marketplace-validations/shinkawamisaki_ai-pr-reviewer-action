@@ -377,14 +377,23 @@ def main():
     #    Both verdicts are matched only at the start of a line: a substring match
     #    would also hit prose *discussing* the verdict format (e.g. a review body
     #    quoting "RESULT: FAIL" in backticks), flipping a PASS into a false FAIL.
+    #    Leading markdown decoration (bold/heading/quote markers) is tolerated —
+    #    models drift into "**RESULT: PASS**" — but any word before RESULT still
+    #    disqualifies the line, so mid-sentence quotes never match.
     #    If both anchored verdicts somehow appear, FAIL wins (err on the failing
     #    side). Anything else is unverifiable: the old "no FAIL found == pass"
     #    logic fell open on injection or format drift.
-    is_fail = bool(re.search(r"^RESULT:\s*FAIL\b", result_text, re.MULTILINE))
-    is_pass = not is_fail and bool(re.search(r"^RESULT:\s*PASS\b", result_text, re.MULTILINE))
-    clean_text = re.sub(r"^RESULT:\s*(PASS|FAIL)\s*$\n?", "", result_text, flags=re.MULTILINE).strip()
+    verdict_re = r"^[ \t>#*_`-]*RESULT:\s*(?:\*|_|`)*\s*{}\b"
+    is_fail = bool(re.search(verdict_re.format("FAIL"), result_text, re.MULTILINE))
+    is_pass = not is_fail and bool(re.search(verdict_re.format("PASS"), result_text, re.MULTILINE))
+    clean_text = re.sub(r"^[ \t>#*_`-]*RESULT:\s*(?:\*|_|`)*\s*(PASS|FAIL)[ \t*_`]*$\n?", "", result_text, flags=re.MULTILINE).strip()
 
     if not is_fail and not is_pass:
+        # Print a short excerpt for debugging format drift. The prompt inputs were
+        # already redacted, and v1 posted the full response as a PR comment anyway,
+        # so a truncated excerpt in the CI log does not widen exposure.
+        excerpt = result_text[:500].replace("\n", " ")
+        print(f"::warning::Unparseable AI response (first 500 chars): {excerpt}")
         conclude_unverifiable("AI response did not contain an explicit RESULT: PASS / RESULT: FAIL")
 
     if is_fail:

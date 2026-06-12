@@ -24,7 +24,8 @@ Review the change below (git diff) against the project rules and the precedents.
 4. When code must be modified, provide concrete suggestions using GitHub's Suggested Changes
    format (```suggestion ... ```) so developers can apply them directly.
 5. Write your entire response in {{language}} (except code snippets).
-6. Output format:
+6. Output format — the first line MUST be exactly the verdict, as plain text with no markdown
+   decoration (no bold, no backticks, no heading marks):
    - Compliant: write "RESULT: PASS" on the first line, then a brief message.
    - Violations or risks: write "RESULT: FAIL" on the first line, then detailed reasons and
      actionable fixes.
