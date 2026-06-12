@@ -74,11 +74,15 @@ def get_base_file_content(repository, path, base_sha, raw_headers, workspace):
     PR, so the change is fully reviewed.
 
     The fetch does not depend on PR contents (an attacker cannot force it to fail), so
-    transient API errors fall back to the workspace (head) copy with a warning. A 404
-    means the file is newly added in this PR — there are no older rules to protect, so
-    the head copy is fine.
+    *transient* API errors fall back to the workspace (head) copy with a warning. A 404
+    is different: it means the file does not exist in the base commit, and a PR author
+    can produce that state at will by newly adding the file. Falling back to the head
+    copy there would inject brand-new, PR-controlled criteria into the trusted sections
+    of the prompt (outside the <diff> delimiters) — exactly the self-reference hole this
+    function exists to close. So a 404 returns 'absent' and callers fall to their safe
+    defaults; newly added criteria files take effect from the *next* PR.
 
-    Returns (content, source) where source is 'base' | 'workspace' | 'empty'.
+    Returns (content, source) where source is 'base' | 'workspace' | 'absent' | 'empty'.
     """
     url = f"https://api.github.com/repos/{repository}/contents/{path}?ref={base_sha}"
     try:
@@ -86,9 +90,10 @@ def get_base_file_content(repository, path, base_sha, raw_headers, workspace):
         if resp.status_code == 200:
             return resp.text, "base"
         if resp.status_code == 404:
-            print(f"::notice::'{path}' does not exist in the base commit (newly added). Using the head copy.")
-        else:
-            print(f"::warning::Failed to fetch '{path}' from the base commit (HTTP {resp.status_code}). Falling back to the head copy.")
+            print(f"::notice::'{path}' does not exist in the base commit (newly added in this PR?). "
+                  "Not using the head copy (self-reference cut); it takes effect from the next PR.")
+            return "", "absent"
+        print(f"::warning::Failed to fetch '{path}' from the base commit (HTTP {resp.status_code}). Falling back to the head copy.")
     except Exception:
         print(f"::warning::Error fetching '{path}' from the base commit. Falling back to the head copy.")
 
@@ -310,8 +315,9 @@ def main():
         conclude_unverifiable("cannot determine the PR base commit for review criteria")
 
     rules_content, rules_src = get_base_file_content(github_repository, rules_file, base_sha, raw_headers, github_workspace)
-    if rules_src == "empty":
-        print(f"::warning::Rules file '{rules_file}' not found. Review will be based on general best practices.")
+    if rules_src in ("empty", "absent"):
+        rules_content = ""
+        print(f"::warning::Rules file '{rules_file}' not available from the base commit. Review will be based on general best practices.")
     else:
         print(f"::notice::Loaded rules from {rules_file} (source={rules_src})")
 
@@ -320,20 +326,26 @@ def main():
     active_rules_content = ""
     if active_rules_file:
         active_rules_content, ar_src = get_base_file_content(github_repository, active_rules_file, base_sha, raw_headers, github_workspace)
-        if ar_src == "empty":
-            print(f"::warning::Precedents file '{active_rules_file}' not found. Reviewing without precedents.")
+        if ar_src in ("empty", "absent"):
+            active_rules_content = ""
+            print(f"::warning::Precedents file '{active_rules_file}' not available from the base commit. Reviewing without precedents.")
         else:
             print(f"::notice::Loaded precedents from {active_rules_file} (source={ar_src})")
 
     # The prompt template is itself review criteria: a PR that waters down the prompt
     # must be reviewed with the pre-change prompt, so a repo-provided template is also
     # read from the base commit. Without a prompt there is no review (unverifiable).
+    prompt_template = ""
     if prompt_file:
         prompt_template, tpl_src = get_base_file_content(github_repository, prompt_file, base_sha, raw_headers, github_workspace)
-        if tpl_src == "empty":
-            conclude_unverifiable(f"prompt template '{prompt_file}' not found")
-        print(f"::notice::Loaded prompt template from {prompt_file} (source={tpl_src})")
-    else:
+        if tpl_src in ("empty", "absent"):
+            # Safe default: the bundled prompt is trusted (shipped with the action image),
+            # so falling back keeps the gate running without adopting PR-controlled criteria.
+            prompt_template = ""
+            print(f"::warning::Prompt template '{prompt_file}' not available from the base commit. Falling back to the bundled prompt.")
+        else:
+            print(f"::notice::Loaded prompt template from {prompt_file} (source={tpl_src})")
+    if not prompt_template:
         if not os.path.exists(BUNDLED_PROMPT_PATH):
             conclude_unverifiable("bundled prompt template missing from the action image")
         with open(BUNDLED_PROMPT_PATH, "r", encoding="utf-8") as f:

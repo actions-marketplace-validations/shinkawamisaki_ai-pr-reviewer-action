@@ -100,7 +100,8 @@ GitHub Variables でモデルを一元管理したい場合は、リポジトリ
           # オプション: 使用するモデル（デフォルト: 'gemini/gemini-2.5-flash'）
           model: 'gemini/gemini-2.5-flash'
           # オプション: 読み込ませたいルールファイルのパス（デフォルト: '.clinerules'）
-          # ※ v3 から PR の base コミットから読み込みます（自己参照の遮断）
+          # ※ v3 から PR の base コミットから読み込みます（自己参照の遮断）。
+          #    PR で新規追加した基準ファイルは採用されず、次の PR から有効になります
           rules_file: '.clinerules'
           # オプション: 判例ファイル（過去の人間判断）。ルールより優先して適用されます
           active_rules_file: 'logs/active_rules.md'

@@ -101,7 +101,8 @@ To manage the model centrally via GitHub Variables, register `AI_REVIEWER_MODEL`
           # Optional: AI model to use (default: 'gemini/gemini-2.5-flash')
           model: 'gemini/gemini-2.5-flash'
           # Optional: Path to your custom rules file. Defaults to '.clinerules'
-          # Note: since v3, read from the PR *base* commit (self-reference cut)
+          # Note: since v3, read from the PR *base* commit (self-reference cut).
+          # Criteria files newly added by a PR are not adopted until the next PR
           rules_file: '.clinerules'
           # Optional: Precedents file (past human decisions). Takes priority over the rules
           active_rules_file: 'logs/active_rules.md'
