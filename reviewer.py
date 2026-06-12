@@ -374,11 +374,14 @@ def main():
     print("::endgroup::")
 
     # 6. Parse the verdict (fail-closed).
-    #    FAIL is matched as a substring (err on the failing side); PASS must appear
-    #    explicitly at the start of a line. Anything else is unverifiable: the old
-    #    "no FAIL found == pass" logic fell open on injection or format drift.
-    is_fail = "RESULT: FAIL" in result_text
-    is_pass = bool(re.search(r"^RESULT:\s*PASS\b", result_text, re.MULTILINE))
+    #    Both verdicts are matched only at the start of a line: a substring match
+    #    would also hit prose *discussing* the verdict format (e.g. a review body
+    #    quoting "RESULT: FAIL" in backticks), flipping a PASS into a false FAIL.
+    #    If both anchored verdicts somehow appear, FAIL wins (err on the failing
+    #    side). Anything else is unverifiable: the old "no FAIL found == pass"
+    #    logic fell open on injection or format drift.
+    is_fail = bool(re.search(r"^RESULT:\s*FAIL\b", result_text, re.MULTILINE))
+    is_pass = not is_fail and bool(re.search(r"^RESULT:\s*PASS\b", result_text, re.MULTILINE))
     clean_text = re.sub(r"^RESULT:\s*(PASS|FAIL)\s*$\n?", "", result_text, flags=re.MULTILINE).strip()
 
     if not is_fail and not is_pass:
