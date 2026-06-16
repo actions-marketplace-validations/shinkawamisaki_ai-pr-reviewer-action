@@ -93,9 +93,22 @@ def get_base_file_content(repository, path, base_sha, raw_headers, workspace):
             print(f"::notice::'{path}' does not exist in the base commit (newly added in this PR?). "
                   "Not using the head copy (self-reference cut); it takes effect from the next PR.")
             return "", "absent"
-        print(f"::warning::Failed to fetch '{path}' from the base commit (HTTP {resp.status_code}). Falling back to the head copy.")
+        # Head fallback is for *transient* errors only. A permanent error (401/403,
+        # other 4xx) must not fall to the PR-controlled head copy, or the self-reference
+        # cut weakens again. Only 429/5xx fall back; everything else returns empty so
+        # callers use their safe defaults (fail-closed).
+        if resp.status_code in (429, 500, 502, 503, 504):
+            print(f"::warning::Transient error fetching '{path}' from the base commit (HTTP {resp.status_code}). Falling back to the head copy.")
+        else:
+            print(f"::warning::Permanent error fetching '{path}' from the base commit (HTTP {resp.status_code}). NOT using the head copy (self-reference cut).")
+            return "", "empty"
+    except requests.RequestException:
+        # Network/timeout — transient, so head fallback is allowed.
+        print(f"::warning::Network error fetching '{path}' from the base commit. Falling back to the head copy.")
     except Exception:
-        print(f"::warning::Error fetching '{path}' from the base commit. Falling back to the head copy.")
+        # Unexpected error — do not adopt the head copy; fail to a safe default.
+        print(f"::warning::Unexpected error fetching '{path}' from the base commit. NOT using the head copy.")
+        return "", "empty"
 
     # Confine the fallback to the workspace. The *_file inputs are repository paths
     # by contract, but os.path.join passes absolute paths ("/etc/passwd") and "../"
