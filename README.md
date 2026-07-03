@@ -144,8 +144,54 @@ Draft→Ready のすり抜け防止（Pending ゲート）は **Commit Status** 
 | Claude Haiku 4.5 | `claude-haiku-4-5-20251001` | `ANTHROPIC_API_KEY` |
 | GPT-4o | `gpt-4o` | `OPENAI_API_KEY` |
 | GPT-4o mini | `gpt-4o-mini` | `OPENAI_API_KEY` |
+| Gemini via **Vertex AI** | `vertex_ai/gemini-2.5-flash` 等 | 不要（WIF/ADC 認証・下記） |
 
 その他 LiteLLM が対応するモデルは [LiteLLM Providers](https://docs.litellm.ai/docs/providers) を参照してください。
+
+### Vertex AI 経由で使う（API キー不要・GCP 請求に一本化）
+
+AI Studio の API キーを発行せず、**Workload Identity Federation (WIF)** で GCP の Vertex AI を呼べます。
+コストは GCP プロジェクトの Cloud Billing（後払い）に載り、AI Studio のプリペイドクレジット管理が不要になります。
+
+GCP 側の準備（Terraform 等で）: レビュー用サービスアカウント + `roles/aiplatform.user` + 対象リポジトリからの `roles/iam.workloadIdentityUser` バインド。
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+  id-token: write   # WIF に必要
+
+steps:
+  - uses: actions/checkout@v4
+
+  - name: Auth (WIF)
+    id: auth
+    uses: google-github-actions/auth@v3
+    with:
+      project_id: 'your-gcp-project'
+      workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/your-pool/providers/your-provider'
+      service_account: 'ai-reviewer-sa@your-gcp-project.iam.gserviceaccount.com'
+
+  # 本アクションは Docker コンテナで動くため、ホストと別のパス空間になる。
+  # auth が書いた ADC（external_account JSON と OIDC トークンの file 参照）を
+  # コンテナ内パスに読み替えたコピーを作って渡す。
+  - name: ADC をコンテナ内パスへ変換
+    run: |
+      sed -e "s|$GITHUB_WORKSPACE|/github/workspace|g" \
+          -e "s|$RUNNER_TEMP|/github/runner_temp|g" \
+          "${{ steps.auth.outputs.credentials_file_path }}" > "$GITHUB_WORKSPACE/gha-adc-container.json"
+      echo "GOOGLE_APPLICATION_CREDENTIALS=/github/workspace/gha-adc-container.json" >> "$GITHUB_ENV"
+
+  - name: Run AI PR Reviewer
+    uses: shinkawamisaki/ai-pr-reviewer-action@v3
+    env:
+      VERTEXAI_PROJECT: 'your-gcp-project'
+      VERTEXAI_LOCATION: 'asia-northeast1'
+    with:
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+      model: 'vertex_ai/gemini-2.5-flash'
+```
 
 ### 4. ログの確認・蓄積方法
 
@@ -190,6 +236,12 @@ AIに「どういう基準でレビューしてほしいか」を教えるため
 
 
 ## 変更履歴 (Changelog)
+
+### [3.1.0] - 2026-07-03
+- **Vertex AI サポート**: `model: vertex_ai/gemini-2.5-flash` 等で、API キーの代わりに WIF/ADC 認証の Vertex AI を利用可能に（コストを GCP の Cloud Billing に一本化できる）
+- litellm が optional 依存にしている `google-auth` を明示追加（無いと `vertex_ai/*` 指定時に `ImportError: No module named 'google'` で落ちる。litellm 1.90.2 で実測）
+- README に GitHub Actions での WIF 構成例（Docker アクション内の ADC パス変換を含む）を追記。実リポジトリの PR で動作検証済み
+- API キー方式（`gemini/*` / `claude-*` / `gpt-*`）の既存動作に変更なし
 
 ### [3.0.0] - 2026-06-12
 セキュリティゲートとしての構造強化（Fail-Closed 化）。

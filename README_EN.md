@@ -145,8 +145,54 @@ This mechanically enforces "warning-only while draft; once ready, no merge until
 | Claude Haiku 4.5 | `claude-haiku-4-5-20251001` | `ANTHROPIC_API_KEY` |
 | GPT-4o | `gpt-4o` | `OPENAI_API_KEY` |
 | GPT-4o mini | `gpt-4o-mini` | `OPENAI_API_KEY` |
+| Gemini via **Vertex AI** | `vertex_ai/gemini-2.5-flash` etc. | none (WIF/ADC auth, see below) |
 
 For the full list of supported models, see [LiteLLM Providers](https://docs.litellm.ai/docs/providers).
+
+### Using Vertex AI (no API key, unified GCP billing)
+
+Instead of an AI Studio API key, you can call Vertex AI via **Workload Identity Federation (WIF)**.
+Costs land on your GCP project's Cloud Billing (postpaid) — no AI Studio prepaid credits to manage.
+
+GCP-side setup (e.g. via Terraform): a reviewer service account + `roles/aiplatform.user` + a `roles/iam.workloadIdentityUser` binding for your repository.
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: write
+  statuses: write
+  id-token: write   # required for WIF
+
+steps:
+  - uses: actions/checkout@v4
+
+  - name: Auth (WIF)
+    id: auth
+    uses: google-github-actions/auth@v3
+    with:
+      project_id: 'your-gcp-project'
+      workload_identity_provider: 'projects/123456789/locations/global/workloadIdentityPools/your-pool/providers/your-provider'
+      service_account: 'ai-reviewer-sa@your-gcp-project.iam.gserviceaccount.com'
+
+  # This action runs in a Docker container with a different path space than the host.
+  # Rewrite the ADC file (external_account JSON and its OIDC token file reference)
+  # to container paths and point GOOGLE_APPLICATION_CREDENTIALS at the copy.
+  - name: Rewrite ADC paths for the Docker action
+    run: |
+      sed -e "s|$GITHUB_WORKSPACE|/github/workspace|g" \
+          -e "s|$RUNNER_TEMP|/github/runner_temp|g" \
+          "${{ steps.auth.outputs.credentials_file_path }}" > "$GITHUB_WORKSPACE/gha-adc-container.json"
+      echo "GOOGLE_APPLICATION_CREDENTIALS=/github/workspace/gha-adc-container.json" >> "$GITHUB_ENV"
+
+  - name: Run AI PR Reviewer
+    uses: shinkawamisaki/ai-pr-reviewer-action@v3
+    env:
+      VERTEXAI_PROJECT: 'your-gcp-project'
+      VERTEXAI_LOCATION: 'asia-northeast1'
+    with:
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+      model: 'vertex_ai/gemini-2.5-flash'
+```
 
 ### 4. Log Confirmation & Accumulation
 
@@ -188,6 +234,12 @@ Example `.clinerules`:
 - `statuses: write` — post the commit status (recommended for v3; without it the action warns and works comment-only, and the draft=pending gate is not enforced)
 
 ## Changelog
+
+### [3.1.0] - 2026-07-03
+- **Vertex AI support**: use `model: vertex_ai/gemini-2.5-flash` etc. with WIF/ADC auth instead of an API key (unifies costs into GCP Cloud Billing)
+- Explicitly add `google-auth`, which litellm treats as an optional dependency (without it, `vertex_ai/*` fails with `ImportError: No module named 'google'`; measured on litellm 1.90.2)
+- README: GitHub Actions WIF example including the ADC path rewrite needed inside Docker actions. Verified on a real repository's PRs
+- No behavior change for the API-key providers (`gemini/*` / `claude-*` / `gpt-*`)
 
 ### [3.0.0] - 2026-06-12
 Structural hardening as a security gate (fail-closed).
