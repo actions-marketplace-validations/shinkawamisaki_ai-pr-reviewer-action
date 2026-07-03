@@ -1,2 +1,5 @@
 litellm
 requests
+# Vertex AI (vertex_ai/*) の ADC/WIF 認証に必要。litellm は google-auth を
+# optional 依存にしており、無いと ImportError: No module named 'google' で落ちる
+google-auth
