@@ -23,6 +23,9 @@ Gemini、Claude、GPT-4o など複数のAIモデルに対応した、ルール�
 
 ## 使い方 (Usage)
 
+各バージョンは同じ番号のタグ（`vX.Y.Z`）で公開しています。`v3` は最新の 3.x を指す移動タグで、
+ワークフローの `uses: shinkawamisaki/ai-pr-reviewer-action@v3` はこれを参照します。
+
 ### 1. APIキーの取得とシークレット登録
 
 使いたいプロバイダーのAPIキーを取得し、導入先リポジトリの **Settings > Secrets and variables > Actions** に登録してください。
@@ -235,7 +238,66 @@ AIに「どういう基準でレビューしてほしいか」を教えるため
 うまく動かない場合は、リポジトリの **Settings > Actions > General > Workflow permissions** が「Read and write permissions」になっているか確認してください。
 
 
+## 依存の更新
+
+依存は `requirements.in`（直接依存・人が編集）と `requirements.txt`（全推移依存をバージョンと
+ハッシュで固定した生成物）の二層です。Docker ビルドは `pip install --require-hashes` で
+インストールするため、固定と一致しない配布物は入りません。ベースイメージも `Dockerfile` で
+パッチバージョンまで固定しています。
+
+更新するときは `requirements.in` のバージョンを変えてから再生成し、ハッシュ付きでインストール
+できることを確認してからコミットしてください（`uv` は `brew install uv` または
+https://docs.astral.sh/uv/ ）。
+
+```bash
+uv pip compile requirements.in --python-version 3.11 --universal --generate-hashes -o requirements.txt
+uv venv --python 3.11 --seed /tmp/venv && /tmp/venv/bin/pip install --require-hashes -r requirements.txt
+```
+
+`requirements.txt` を手で編集しないでください。上げる前に PyPI の公開日と OSV（既知脆弱性）を
+確認する運用を推奨します。
+
 ## 変更履歴 (Changelog)
+
+### [3.1.7] - 2026-09-20
+- **単体テストを追加**（`tests/test_reviewer.py`、33 件、API 呼び出しなし）と CI（`.github/workflows/tests.yml`）。
+  3.1.2〜3.1.6 で本番で踏んだ不具合（プロバイダ判定、temperature 非対応モデル、除外一覧がステータス投稿を壊す）を
+  再発防止のテストとして固定
+- テストできるように、diff の除外処理（`filter_diff`）、プロンプト組み立て（`build_prompt`）、判定の解析
+  （`parse_verdict`）を純粋関数に切り出した。動作は変更なし
+
+### [3.1.6] - 2026-09-19
+- **修正**: 3.1.5 で、除外ファイルがある PR では判定後に `TypeError: 'str' object is not callable` で落ちていた
+  （ローカル変数 `status` がコミットステータス投稿関数を上書きしていた）。変数名を変更
+
+### [3.1.5] - 2026-09-19
+- **注入対策**: `{{excluded_files}}` に入るファイル名は PR 作成者が自由に付けられるため、同梱プロンプトで
+  `<excluded_files>` で囲み「信頼しないデータ」として指示 0 のガード対象に含めた。エンジン側でも制御文字を
+  除去し長さを制限する
+- 除外ファイルに `(added)` / `(modified)` / `(deleted)` を付け、AI が「新規追加なのに配線が無い」と誤推論しないようにした
+
+### [3.1.4] - 2026-09-19
+- **修正**: `exclude_patterns` で除外したファイルを、AI が「参照先ファイルの欠落」として FAIL にしていた。
+  除外したファイル名の一覧を新しいプレースホルダ `{{excluded_files}}` でプロンプトに渡す（同梱プロンプトに
+  節を追加）。独自プロンプトにプレースホルダが無い場合は diff の先頭に注記を入れる
+
+### [3.1.3] - 2026-09-19
+- **修正**: `temperature=0` を受け付けないモデル（例 `claude-sonnet-5`。LiteLLM が `UnsupportedParamsError` を返す）で
+  レビューが「AI API call failed」で止まっていた。その場合は temperature を外して再試行する（notice を出す。
+  判定の再現性は下がる）。`claude-haiku-4-5` や Gemini は従来どおり temperature=0 で動く
+
+### [3.1.2] - 2026-09-19
+- **修正**: `model` にプロバイダ接頭辞の無いモデル名（例 `claude-sonnet-5`、`claude-opus-4-7`）を指定すると
+  OpenAI 扱いになり `No API key found for provider 'openai'` で止まっていた。プロバイダ判定を LiteLLM の
+  解決結果（`get_llm_provider`）に合わせ、`claude-*` は Anthropic、`gpt-*` は OpenAI として鍵を確認する。
+  `vertex_ai/*` など鍵を使わないプロバイダは事前確認をスキップする
+
+### [3.1.1] - 2026-09-19
+- **依存の固定**: `requirements.txt` を全推移依存（62 パッケージ）のバージョン＋ハッシュ固定に変更し、
+  Docker ビルドを `pip install --require-hashes` に。直接依存は `requirements.in` に分離
+  （litellm 1.101.0 / requests 2.34.2 / google-auth 2.58.0。いずれも OSV に既知脆弱性なしを確認）
+- ベースイメージを `python:3.11.16-slim` に固定
+- 動作変更なし（入力・出力・判定ロジックは 3.1.0 と同じ）
 
 ### [3.1.0] - 2026-07-03
 - **Vertex AI サポート**: `model: vertex_ai/gemini-2.5-flash` 等で、API キーの代わりに WIF/ADC 認証の Vertex AI を利用可能に（コストを GCP の Cloud Billing に一本化できる）

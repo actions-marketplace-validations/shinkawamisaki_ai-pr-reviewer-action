@@ -233,7 +233,51 @@ Example `.clinerules`:
 - `pull-requests: write` — post and update PR comments (required)
 - `statuses: write` — post the commit status (recommended for v3; without it the action warns and works comment-only, and the draft=pending gate is not enforced)
 
+## Updating dependencies
+
+Dependencies are split into `requirements.in` (direct dependencies, edited by hand) and
+`requirements.txt` (a generated lock of every transitive dependency with versions and hashes).
+The Docker build installs with `pip install --require-hashes`, so nothing that does not match
+the lock can be installed. The base image is pinned to a patch version in the `Dockerfile`.
+
+To update, change the version in `requirements.in`, regenerate the lock, and make sure it
+installs with hashes before committing (`uv`: https://docs.astral.sh/uv/):
+
+```bash
+uv pip compile requirements.in --python-version 3.11 --universal --generate-hashes -o requirements.txt
+uv venv --python 3.11 --seed /tmp/venv && /tmp/venv/bin/pip install --require-hashes -r requirements.txt
+```
+
+Do not edit `requirements.txt` by hand.
+
 ## Changelog
+
+### [3.1.7] - 2026-09-20
+- Added unit tests (`tests/test_reviewer.py`, 33 cases, no API calls) and a CI workflow. The bugs fixed in
+  3.1.2 to 3.1.6 are now covered by regression tests. Diff filtering, prompt building and verdict parsing
+  were extracted into pure functions; behaviour is unchanged.
+
+### [3.1.6] - 2026-09-19
+- Fix: in 3.1.5, PRs with excluded files crashed after the verdict (`TypeError: 'str' object is not callable`;
+  a local variable shadowed the commit-status helper).
+
+### [3.1.5] - 2026-09-19
+- Injection hardening: `{{excluded_files}}` (file names chosen by the PR author) is now wrapped in
+  `<excluded_files>` and covered by instruction 0 in the bundled prompt; control characters are stripped
+  and names are length-capped. Entries carry `(added)` / `(modified)` / `(deleted)`.
+
+### [3.1.4] - 2026-09-19
+- Fix: files skipped via `exclude_patterns` were reported by the model as "missing". Their names are now passed
+  to the prompt through the new `{{excluded_files}}` placeholder (added to the bundled prompt); custom prompts
+  without the placeholder get a note at the top of the diff.
+
+### [3.1.3] - 2026-09-19
+- Fix: models that reject `temperature=0` (e.g. `claude-sonnet-5`, where LiteLLM raises `UnsupportedParamsError`)
+  made the review fail. The reviewer now retries once without `temperature` and logs a notice.
+
+### [3.1.2] - 2026-09-19
+- Fix: a `model` without a provider prefix (e.g. `claude-sonnet-5`, `claude-opus-4-7`) was treated as OpenAI and
+  failed with `No API key found for provider 'openai'`. Provider detection now follows LiteLLM's resolver.
 
 ### [3.1.0] - 2026-07-03
 - **Vertex AI support**: use `model: vertex_ai/gemini-2.5-flash` etc. with WIF/ADC auth instead of an API key (unifies costs into GCP Cloud Billing)
